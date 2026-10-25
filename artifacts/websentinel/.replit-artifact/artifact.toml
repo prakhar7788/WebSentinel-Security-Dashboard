@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "WebSentinel"
+description = "A responsive prototype for a website security assessment platform, with dashboard, scan setup and results, findings, DOM inspection, assets, history, and reports. Scan and ML outputs are clearly marked as sample data until integrated."
+version = "1.0.0"
+id = "artifacts/websentinel"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23370
+
+[services.development]
+run = "pnpm --filter @workspace/websentinel run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/websentinel", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/websentinel/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23370"
+BASE_PATH = "/"
