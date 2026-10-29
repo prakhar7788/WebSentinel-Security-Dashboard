@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useLocation } from 'wouter';
 import {
   Globe2, Search, Radar, Zap, ChevronDown, ChevronRight, Check,
   AlertCircle, Loader2, Network, Shield, Lock, LockKeyhole,
@@ -6,6 +7,7 @@ import {
   Activity, Info, Download,
 } from 'lucide-react';
 import { useAuth, apiFetch } from '@/lib/auth';
+import { useScanStore } from '@/lib/scans';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface SubdomainResult {
@@ -61,6 +63,8 @@ function HttpStatusBadge({ status }: { status?: number }) {
 
 export default function Subdomains() {
   const { token } = useAuth();
+  const { addSubdomainScan } = useScanStore();
+  const [, navigate] = useLocation();
 
   const [domain, setDomain] = useState(() => {
     try { return new URLSearchParams(window.location.search).get('domain') ?? ''; } catch { return ''; }
@@ -71,6 +75,7 @@ export default function Subdomains() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<EnumerationResponse | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -85,6 +90,7 @@ export default function Subdomains() {
     }
     setError('');
     setResult(null);
+    setSavedId(null);
     setLoading(true);
     setQuery('');
     setSourceFilter('all');
@@ -98,7 +104,11 @@ export default function Subdomains() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? `Server error (${res.status})`);
       }
-      setResult(await res.json());
+      const data: EnumerationResponse = await res.json();
+      setResult(data);
+      // Save to store — returns the record with the generated id
+      const record = addSubdomainScan(data);
+      setSavedId(record.id);
     } catch (err: any) {
       setError(err.message ?? 'Enumeration failed.');
     } finally {
@@ -285,6 +295,21 @@ export default function Subdomains() {
           {/* Results */}
           {!loading && result && (
             <>
+              {/* Saved banner */}
+              {savedId && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[.06] px-4 py-3">
+                  <div className="flex items-center gap-2 text-[10px] text-emerald-300">
+                    <Check size={13} className="shrink-0" />
+                    <span>Scan saved as <span className="mono font-bold">{savedId}</span> — visible in Overview &amp; History.</span>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/scans/${savedId}`)}
+                    className="flex items-center gap-1.5 rounded-md border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1.5 text-[9px] font-bold text-emerald-300 transition hover:bg-emerald-400/15"
+                  >
+                    View report <ChevronRight size={11} />
+                  </button>
+                </div>
+              )}
               {/* Summary bar */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
