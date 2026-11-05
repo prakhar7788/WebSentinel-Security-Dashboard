@@ -1195,81 +1195,341 @@ function HistoryPage() {
 
 function Reports() {
   const { scans, allFindings } = useScanStore();
-  const tlsScans = scans.filter((s): s is TlsScanRecord => s.type === 'tls');
+  const tlsScans  = scans.filter((s): s is TlsScanRecord => s.type === 'tls');
+  const subScans  = scans.filter((s): s is SubdomainScanRecord => s.type === 'subdomain');
   const latestTls = tlsScans[0];
   const latestScore = latestTls ? scoreFromTlsScan(latestTls) : null;
-  const recentFindings = allFindings.slice(0, 10);
+
+  // ── report config state ────────────────────────────────────────────────────
+  const [generating, setGenerating] = useState(false);
+  const [genError,   setGenError]   = useState('');
+  const [domain,     setDomain]     = useState(() => scans[0]?.domain ?? '');
+  const [assessor,   setAssessor]   = useState('WebSentinel Scanner');
+  const [org,        setOrg]        = useState('WebSentinel Security');
+  const [classif,    setClassif]    = useState<'Confidential'|'Internal'|'Public'>('Confidential');
+  const [rawData,    setRawData]    = useState(true);
+
+  const [sections, setSections] = useState({
+    executiveSummary:     true,
+    subdomainEnumeration: true,
+    certTransparency:     true,
+    dnsAnalysis:          true,
+    tlsAssessment:        true,
+    securityHeaders:      true,
+    findings:             true,
+    riskAssessment:       true,
+    mitigation:           true,
+    analytics:            true,
+    historicalComparison: true,
+    appendices:           true,
+  });
+
+  const sectionLabels: Record<keyof typeof sections, string> = {
+    executiveSummary:     'Executive Summary',
+    subdomainEnumeration: 'Subdomain Enumeration',
+    certTransparency:     'Certificate Transparency',
+    dnsAnalysis:          'DNS Analysis',
+    tlsAssessment:        'HTTPS / TLS Assessment',
+    securityHeaders:      'Security Headers',
+    findings:             'Security Findings',
+    riskAssessment:       'Risk Assessment',
+    mitigation:           'Risk Mitigation',
+    analytics:            'Analytics & Statistics',
+    historicalComparison: 'Historical Comparison',
+    appendices:           'Technical Appendices',
+  };
+
+  async function handleGenerate() {
+    if (scans.length === 0) return;
+    setGenerating(true);
+    setGenError('');
+    try {
+      const { generateSecurityReport } = await import('@/lib/report-engine');
+      await generateSecurityReport(scans, allFindings, {
+        sections,
+        targetDomain: domain || scans[0]?.domain || '',
+        assessorName: assessor,
+        organizationName: org,
+        reportClassification: classif,
+        includeRawData: rawData,
+      });
+    } catch (e: any) {
+      setGenError(e?.message ?? 'Report generation failed.');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  const allOn  = Object.values(sections).every(Boolean);
+  const allOff = Object.values(sections).every(v => !v);
+
+  function toggleAll(on: boolean) {
+    setSections(Object.fromEntries(Object.keys(sections).map(k => [k, on])) as typeof sections);
+  }
+
+  // ── stat helpers ───────────────────────────────────────────────────────────
+  const totalSubs    = subScans.reduce((n, s) => n + s.data.totalFound, 0);
+  const critCount    = allFindings.filter(f => f.severity === 'Critical').length;
+  const highCount    = allFindings.filter(f => f.severity === 'High').length;
 
   return (
     <div className="fade-up">
-      <PageHeading kicker="Records / reporting" title="Reports" description="Printable summary of your scan results." action={<Button onClick={()=>window.print()}><Download size={14}/>Export / print</Button>}/>
+      <PageHeading
+        kicker="Records / reporting"
+        title="Security Reports"
+        description="Generate a comprehensive, professional-grade PDF security assessment report from your scan data."
+        action={
+          <Button
+            onClick={handleGenerate}
+            disabled={generating || scans.length === 0}
+            className="gap-2"
+          >
+            {generating
+              ? <><Loader2 size={14} className="animate-spin" /> Generating…</>
+              : <><Download size={14} /> Generate PDF</>}
+          </Button>
+        }
+      />
+
       {scans.length === 0 ? (
-        <Card className="p-10 text-center">
-          <FileText size={22} className="mx-auto text-[#435268]"/>
-          <div className="mt-3 text-[12px] font-semibold text-[#dce6f5]">No data to report yet</div>
+        <Card className="p-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[#2b3954] bg-[#162135] text-[#78aaff]">
+            <FileText size={26} />
+          </div>
+          <div className="mt-4 text-[13px] font-bold text-[#dce6f5]">No scan data yet</div>
           <p className="mt-2 text-[10px] text-[#75839a]">Run subdomain or TLS scans to generate a report.</p>
+          <div className="mt-5 flex justify-center gap-2">
+            <Link href="/subdomains" className="inline-flex items-center gap-2 rounded-lg bg-[#438cff] px-4 py-2.5 text-[11px] font-bold text-[#08111f] hover:bg-[#64a1ff]">
+              <Network size={14} /> Subdomains
+            </Link>
+            <Link href="/tls" className="inline-flex items-center gap-2 rounded-lg border border-[#273249] bg-[#151c2b] px-3.5 py-2.5 text-[11px] font-semibold text-[#dce4f1] hover:bg-[#1b2537]">
+              <LockKeyhole size={14} /> TLS Check
+            </Link>
+          </div>
         </Card>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-          <Card className="print-area overflow-hidden">
-            <div className="border-b border-[#252f43] bg-[#131d2c] px-6 py-5 md:px-8">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-[10px] font-extrabold tracking-[-.03em] text-[#dce6f5]"><Shield size={16} className="text-[#69a8ff]"/>WEBSENTINEL</div>
-                <span className="text-[9px] text-[#75839a]">{new Date().toLocaleDateString()}</span>
+        <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+
+          {/* ── Left: data snapshot + section config ─────────────────────── */}
+          <div className="space-y-4">
+
+            {/* Data snapshot */}
+            <Card className="overflow-hidden">
+              <div className="border-b border-[#202a3c] px-5 py-4">
+                <Eyebrow>Data snapshot</Eyebrow>
+                <h2 className="text-[14px] font-bold text-[#dce6f5]">What's in this report</h2>
               </div>
-              <div className="mt-6">
-                <div className="mono text-[9px] uppercase tracking-[.17em] text-[#7c8ba3]">Security assessment report</div>
-                <h2 className="mt-2 text-[24px] font-bold tracking-[-.05em] text-[#edf3ff]">{latestTls?.domain ?? scans[0].domain}</h2>
-                <p className="mt-2 text-[10px] text-[#8a98ae]">Generated {new Date().toLocaleString()} · {scans.length} scan{scans.length !== 1 ? 's' : ''} in history</p>
+              <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-4">
+                {[
+                  { label: 'TLS Score',         value: latestScore != null ? `${latestScore}/100` : '—', color: 'text-blue-300'    },
+                  { label: 'Total Scans',        value: String(scans.length),                             color: 'text-violet-300'  },
+                  { label: 'Subdomains Found',   value: String(totalSubs),                                color: 'text-sky-300'     },
+                  { label: 'Open Findings',      value: String(allFindings.length),                       color: critCount > 0 ? 'text-red-300' : highCount > 0 ? 'text-amber-300' : 'text-emerald-300' },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className="rounded-lg border border-[#202a3c] bg-[#0d1521] p-3 text-center">
+                    <div className={`text-[22px] font-bold tracking-[-.04em] ${color}`}>{value}</div>
+                    <div className="mt-1 text-[9px] text-[#68758b]">{label}</div>
+                  </div>
+                ))}
               </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3 border-b border-[#252f43] px-6 py-5 md:px-8">
-              {[
-                ['TLS score', latestScore != null ? `${latestScore} / 100` : '—'],
-                ['Total scans', String(scans.length)],
-                ['Findings', String(allFindings.length)],
-              ].map(([a,b]) => (
-                <div key={a}><div className="text-[9px] text-[#7b89a0]">{a}</div><div className="mt-1 text-[16px] font-bold text-[#dce6f5]">{b}</div></div>
-              ))}
-            </div>
-            {latestTls && (
-              <div className="px-6 py-5 md:px-8">
-                <div className="text-[12px] font-bold text-[#dce6f5]">Latest TLS assessment · {latestTls.domain}</div>
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {[['Grade', latestTls.grade],['Score',String(latestScore)],['Critical',String(latestTls.findingsCount.critical)],['High',String(latestTls.findingsCount.high)]].map(([l,v])=>(
-                    <div key={l} className="rounded-lg border border-[#273249] bg-[#151f2e] p-3"><div className="text-[8px] text-[#77859b]">{l}</div><div className="mt-1 text-[13px] font-bold text-[#dce6f5]">{v}</div></div>
-                  ))}
+
+              {/* Scan list */}
+              <div className="border-t border-[#202a3c] px-5 pb-5">
+                <div className="mb-3 mt-4 text-[10px] font-bold text-[#dce6f5]">Scans included ({scans.length})</div>
+                <div className="max-h-[160px] overflow-y-auto space-y-1.5">
+                  {scans.map(s => {
+                    const isTls = s.type === 'tls';
+                    const tls = isTls ? (s as TlsScanRecord) : null;
+                    return (
+                      <div key={s.id} className="flex items-center gap-3 rounded-lg border border-[#1e2a3a] bg-[#0c1420] px-3 py-2">
+                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[10px] font-bold ${isTls ? 'bg-violet-400/10 text-violet-300' : 'bg-blue-400/10 text-blue-300'}`}>
+                          {isTls ? <LockKeyhole size={11} /> : <Network size={11} />}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="mono truncate text-[10px] font-semibold text-[#c4cfdf]">{s.id} · {s.domain}</div>
+                          <div className="text-[8px] text-[#68758b]">{relativeTime(s.scannedAt)} · {isTls ? `Grade ${tls!.grade}` : `${(s as SubdomainScanRecord).data.totalFound} subdomains`}</div>
+                        </div>
+                        <StatusPill tone={isTls ? 'violet' : 'blue'}>{isTls ? 'TLS' : 'Sub'}</StatusPill>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            )}
-            {recentFindings.length > 0 && (
-              <div className="px-6 pb-6 md:px-8">
-                <div className="text-[12px] font-bold text-[#dce6f5] mb-3">Finding summary ({allFindings.length} total)</div>
-                <div className="overflow-hidden rounded-lg border border-[#273249]">
-                  <div className="grid grid-cols-[1fr_90px_90px] bg-[#151f2e] px-3 py-2 text-[8px] uppercase tracking-wider text-[#77859b]"><span>Finding</span><span>Severity</span><span>Domain</span></div>
-                  {recentFindings.map(f => (
-                    <div key={f.id} className="grid grid-cols-[1fr_90px_90px] border-t border-[#252f43] px-3 py-3 text-[9px]">
-                      <div className="text-[#cbd6e6] pr-2">{f.title}</div>
-                      <div className="text-[#aebbd0]">{f.severity}</div>
-                      <div className="mono text-[8px] text-[#728098] truncate">{f.domain}</div>
-                    </div>
-                  ))}
-                </div>
-                {allFindings.length > 10 && <p className="mt-2 text-[9px] text-[#69778e]">Showing 10 of {allFindings.length} findings.</p>}
-              </div>
-            )}
-          </Card>
-          <div className="space-y-3 no-print">
-            <Card className="p-4">
-              <Eyebrow>Export</Eyebrow>
-              <Button className="mt-2 w-full" onClick={()=>window.print()}><Download size={13}/>Open print dialog</Button>
-              <p className="mt-3 text-[9px] leading-4 text-[#68768d]">Use your browser's print dialog to save as PDF.</p>
             </Card>
+
+            {/* Section toggles */}
+            <Card className="overflow-hidden">
+              <div className="flex items-center justify-between border-b border-[#202a3c] px-5 py-4">
+                <div>
+                  <Eyebrow>Report sections</Eyebrow>
+                  <h2 className="text-[14px] font-bold text-[#dce6f5]">Choose what to include</h2>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => toggleAll(true)}
+                    disabled={allOn}
+                    className="rounded-md border border-[#273249] bg-[#151c2b] px-2.5 py-1.5 text-[9px] font-semibold text-[#8da0bd] transition hover:border-[#354461] disabled:opacity-40"
+                  >All on</button>
+                  <button
+                    onClick={() => toggleAll(false)}
+                    disabled={allOff}
+                    className="rounded-md border border-[#273249] bg-[#151c2b] px-2.5 py-1.5 text-[9px] font-semibold text-[#8da0bd] transition hover:border-[#354461] disabled:opacity-40"
+                  >All off</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-0 divide-y divide-[#1a2335] p-0 sm:grid-cols-2 sm:divide-y-0">
+                {(Object.keys(sections) as Array<keyof typeof sections>).map((key, i) => {
+                  const on = sections[key];
+                  const sectionIcons: Record<string, any> = {
+                    executiveSummary: BarChart3, subdomainEnumeration: Network,
+                    certTransparency: ShieldCheck, dnsAnalysis: Globe2,
+                    tlsAssessment: LockKeyhole, securityHeaders: Shield,
+                    findings: ShieldAlert, riskAssessment: AlertTriangle,
+                    mitigation: Zap, analytics: Activity,
+                    historicalComparison: History, appendices: FileText,
+                  };
+                  const Icon = sectionIcons[key] ?? FileText;
+                  return (
+                    <label key={key}
+                      className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition ${i % 2 === 0 ? 'sm:border-r sm:border-[#1a2335]' : ''} ${on ? 'bg-[#0d1a2b]' : 'opacity-60'}`}>
+                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${on ? 'bg-blue-400/10 text-blue-300' : 'bg-[#1a2537] text-[#455269]'}`}>
+                        <Icon size={13} />
+                      </span>
+                      <span className="flex-1 text-[10px] font-semibold text-[#c4cfdf]">{sectionLabels[key]}</span>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={e => setSections(prev => ({ ...prev, [key]: e.target.checked }))}
+                        className="h-3.5 w-3.5 accent-[#438cff]"
+                        aria-label={sectionLabels[key]}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </Card>
+          </div>
+
+          {/* ── Right: report config + generate ──────────────────────────── */}
+          <div className="space-y-4">
+
+            {/* Report metadata */}
+            <Card className="p-5">
+              <Eyebrow>Report configuration</Eyebrow>
+              <h2 className="text-[13px] font-bold text-[#dce6f5] mb-4">Metadata</h2>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-[9px] font-semibold text-[#8a9ab5]">Target domain</label>
+                  <div className="flex items-center gap-2 rounded-lg border border-[#2b3850] bg-[#0d1420] px-3 focus-within:border-[#5e9aff]">
+                    <Globe2 size={12} className="text-[#71809a]" />
+                    <input
+                      value={domain}
+                      onChange={e => setDomain(e.target.value)}
+                      placeholder="example.com"
+                      className="h-9 w-full bg-transparent text-[11px] text-[#dce6f5] outline-none placeholder:text-[#546179]"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[9px] font-semibold text-[#8a9ab5]">Assessor name</label>
+                  <input
+                    value={assessor}
+                    onChange={e => setAssessor(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-[#2b3850] bg-[#0d1420] px-3 text-[11px] text-[#dce6f5] outline-none focus:border-[#5e9aff]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[9px] font-semibold text-[#8a9ab5]">Organization</label>
+                  <input
+                    value={org}
+                    onChange={e => setOrg(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-[#2b3850] bg-[#0d1420] px-3 text-[11px] text-[#dce6f5] outline-none focus:border-[#5e9aff]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[9px] font-semibold text-[#8a9ab5]">Classification</label>
+                  <select
+                    value={classif}
+                    onChange={e => setClassif(e.target.value as typeof classif)}
+                    className="h-9 w-full rounded-lg border border-[#2b3850] bg-[#0d1420] px-3 text-[11px] text-[#dce6f5] outline-none focus:border-[#5e9aff]"
+                  >
+                    <option value="Confidential">🔴 Confidential</option>
+                    <option value="Internal">🟡 Internal</option>
+                    <option value="Public">🟢 Public</option>
+                  </select>
+                </div>
+                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-[#222d40] bg-[#0f1725] px-3.5 py-3">
+                  <span className="flex-1 text-[10px] font-semibold text-[#cbd6e7]">Include raw scan metadata</span>
+                  <input type="checkbox" checked={rawData} onChange={e => setRawData(e.target.checked)} className="h-3.5 w-3.5 accent-[#438cff]" />
+                </label>
+              </div>
+            </Card>
+
+            {/* What's included summary */}
             <Card className="p-4">
-              <Eyebrow>Report covers</Eyebrow>
-              <div className="space-y-2 mt-1">
-                {[`${scans.length} scans`,`${allFindings.length} findings`,latestTls ? `TLS grade ${latestTls.grade}` : 'No TLS data',`Generated ${new Date().toLocaleDateString()}`].map(l=>(
-                  <div key={l} className="flex items-center gap-2 text-[10px] text-[#aab6c9]"><Check size={13} className="text-[#62c99a]"/>{l}</div>
+              <Eyebrow>Report will include</Eyebrow>
+              <div className="mt-2 space-y-1.5">
+                {[
+                  { label: `${scans.length} scan${scans.length !== 1 ? 's' : ''}`, on: true },
+                  { label: `${allFindings.length} security finding${allFindings.length !== 1 ? 's' : ''}`, on: allFindings.length > 0 },
+                  { label: `${totalSubs} subdomain${totalSubs !== 1 ? 's' : ''}`, on: totalSubs > 0 },
+                  { label: latestTls ? `TLS grade ${latestTls.grade} · score ${latestScore}/100` : 'No TLS data', on: !!latestTls },
+                  { label: `${Object.values(sections).filter(Boolean).length}/12 sections`, on: true },
+                ].map(({ label, on }) => (
+                  <div key={label} className="flex items-center gap-2 text-[10px] text-[#9ab0c9]">
+                    <Check size={12} className={on ? 'text-[#62c99a]' : 'text-[#455269]'} />
+                    {label}
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            {/* Generate button */}
+            <Card className="p-5">
+              <div className="mb-3 text-[10px] leading-5 text-[#8190a8]">
+                Generates a multi-page PDF with all selected sections. The file downloads directly — no server upload.
+              </div>
+
+              {genError && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/[.07] px-3 py-2.5 text-[10px] text-red-300">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {genError}
+                </div>
+              )}
+
+              <button
+                onClick={handleGenerate}
+                disabled={generating || scans.length === 0}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#438cff] px-4 py-3.5 text-[12px] font-bold text-[#08111f] shadow-[0_6px_24px_rgba(55,129,255,.2)] transition hover:bg-[#64a1ff] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {generating
+                  ? <><Loader2 size={15} className="animate-spin" /> Building PDF…</>
+                  : <><Download size={15} /> Generate Security Report</>}
+              </button>
+
+              {generating && (
+                <p className="mt-2.5 text-center text-[9px] text-[#68758b]">
+                  Processing {scans.length} scan{scans.length !== 1 ? 's' : ''} — this may take a few seconds for large datasets…
+                </p>
+              )}
+            </Card>
+
+            {/* Format info */}
+            <Card className="p-4">
+              <Eyebrow>Report format</Eyebrow>
+              <div className="mt-2 space-y-1.5 text-[9px] text-[#7a8899]">
+                {[
+                  'A4 portrait, professionally styled',
+                  'Cover page with classification banner',
+                  'Detailed findings with severity badges',
+                  'Data tables for all scan results',
+                  'Risk scoring and remediation guidance',
+                  'Historical comparison across scans',
+                  'Technical appendices with full metadata',
+                ].map(l => (
+                  <div key={l} className="flex items-center gap-2">
+                    <span className="h-1 w-1 shrink-0 rounded-full bg-[#438cff]" />
+                    {l}
+                  </div>
                 ))}
               </div>
             </Card>

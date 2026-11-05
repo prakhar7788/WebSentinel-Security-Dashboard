@@ -11,23 +11,66 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
 import { useWorkspace } from '@/lib/workspaces';
 
 // ── Subdomain result types (mirrors API) ──────────────────────────────────────
+
+/**
+ * All possible source identifiers returned by the backend pipeline.
+ * Kept as a union so the frontend can render a distinct badge per source.
+ *   API sources   : crt.sh, hackertarget, rapiddns, alienvault, threatcrowd,
+ *                   virustotal, urlscan, anubis
+ *   Tool runners  : subfinder, amass, sublist3r
+ *   Built-in      : dns-brute, passive (prefix guessing)
+ *   Legacy aliases: active, cert-transparency (kept for backwards-compat records)
+ */
+export type SubdomainSource =
+  | 'crt.sh'
+  | 'hackertarget'
+  | 'rapiddns'
+  | 'alienvault'
+  | 'threatcrowd'
+  | 'virustotal'
+  | 'urlscan'
+  | 'anubis'
+  | 'subfinder'
+  | 'amass'
+  | 'sublist3r'
+  | 'dns-brute'
+  | 'passive'
+  | 'active'
+  | 'cert-transparency';
+
+/** Per-source run summary included in every enumeration response. */
+export interface SourceSummary {
+  name: string;
+  type: 'api' | 'tool' | 'builtin';
+  ran: boolean;
+  found: number;
+  elapsedMs: number;
+  error?: string;
+}
+
 export interface SubdomainEntry {
   subdomain: string;
   fqdn: string;
   resolved: boolean;
   ipAddresses: string[];
-  source: 'active' | 'passive' | 'cert-transparency' | 'dns-brute';
+  /** Primary source that first discovered this FQDN. */
+  source: SubdomainSource;
+  /** Every source that returned this FQDN (may be several). */
+  sources?: SubdomainSource[];
   httpStatus?: number;
   httpsAvailable?: boolean;
   responseTime?: number;
   cnames?: string[];
 }
+
 export interface SubdomainScanData {
   domain: string;
   mode: string;
   totalFound: number;
   resolvedCount: number;
   elapsedMs: number;
+  /** Per-source breakdown — present on new scans, absent on legacy stored records. */
+  sourceSummaries?: SourceSummary[];
   subdomains: SubdomainEntry[];
 }
 
