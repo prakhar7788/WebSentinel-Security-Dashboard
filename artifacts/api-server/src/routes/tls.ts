@@ -3,7 +3,7 @@ import { z } from "zod";
 import tls from "node:tls";
 import https from "node:https";
 import http from "node:http";
-import { activeSessions } from "./auth.js";
+import { activeSessions, isValidToken } from "./auth.js";
 
 const router: IRouter = Router();
 
@@ -15,7 +15,7 @@ function requireAuth(req: Request, res: Response, next: () => void) {
     return;
   }
   const token = auth.slice(7);
-  if (!activeSessions.has(token)) {
+  if (!isValidToken(token)) {
     res.status(401).json({ error: "Invalid or expired token" });
     return;
   }

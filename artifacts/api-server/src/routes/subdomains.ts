@@ -26,7 +26,7 @@ import { z } from "zod";
 import dns from "node:dns/promises";
 import https from "node:https";
 import http from "node:http";
-import { activeSessions } from "./auth.js";
+import { activeSessions, isValidToken } from "./auth.js";
 import { runAllPassiveSources, type PassiveSourceName } from "../lib/passive-sources.js";
 import { runAllTools } from "../lib/tool-runner.js";
 
@@ -41,7 +41,7 @@ function requireAuth(req: Request, res: Response, next: () => void) {
     return;
   }
   const token = auth.slice(7);
-  if (!activeSessions.has(token)) {
+  if (!isValidToken(token)) {
     res.status(401).json({ error: "Invalid or expired token" });
     return;
   }

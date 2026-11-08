@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import Login from '@/pages/login';
+import Signup from '@/pages/signup';
 import Profile from '@/pages/profile';
 import Subdomains from '@/pages/subdomains';
 import TlsCheck from '@/pages/tls-check';
@@ -1680,6 +1681,7 @@ function DashboardRoutes() {
 
   if (loc === '/') return <Landing />;
   if (loc === '/login') return <Login />;
+  if (loc === '/signup') return <Signup />;
 
   return (
     <AuthGuard>

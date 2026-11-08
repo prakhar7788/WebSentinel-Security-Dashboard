@@ -154,7 +154,10 @@ export default function Login() {
         </div>
 
         <p className="mt-5 text-center text-[9px] text-[#55637a]">
-          WebSentinel Security Workspace · Prototype environment
+          Don't have an account?{' '}
+          <Link href="/signup" className="font-bold text-[#62a1ff] hover:text-[#80b8ff] transition-colors">
+            Sign up
+          </Link>
         </p>
       </div>
     </div>
