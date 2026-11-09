@@ -1,4 +1,5 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm install --ignore-scripts && pnpm --filter @workspace/websentinel run build",
   "outputDirectory": "artifacts/websentinel/dist/public",
   "framework": null,
