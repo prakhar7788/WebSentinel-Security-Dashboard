@@ -1,11 +1,13 @@
 import { useState } from 'react';
+import { useLocation } from 'wouter';
 import {
   Globe2, Shield, ShieldCheck, ShieldAlert, ShieldX, LockKeyhole, Lock,
-  AlertTriangle, AlertCircle, Check, X, ChevronDown, Loader2,
+  AlertTriangle, AlertCircle, Check, X, ChevronDown, ChevronRight, Loader2,
   Clock3, Calendar, Info, ExternalLink, Activity, Server, Fingerprint,
   ArrowUpRight, ArrowDownRight, Minus,
 } from 'lucide-react';
 import { useAuth, apiFetch } from '@/lib/auth';
+import { useScanStore } from '@/lib/scans';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TlsCertInfo {
@@ -126,6 +128,9 @@ function CollapsibleSection({ title, children, defaultOpen = false }: { title: s
 
 export default function TlsCheck() {
   const { token } = useAuth();
+  const { addTlsScan } = useScanStore();
+  const [, navigate] = useLocation();
+
   const [host, setHost] = useState(() => {
     try { return new URLSearchParams(window.location.search).get('host') ?? ''; } catch { return ''; }
   });
@@ -135,6 +140,7 @@ export default function TlsCheck() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<TlsCheckResult | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -148,6 +154,7 @@ export default function TlsCheck() {
 
     setError('');
     setResult(null);
+    setSavedId(null);
     setLoading(true);
     try {
       const res = await apiFetch('/api/tls/check', token, {
@@ -158,7 +165,11 @@ export default function TlsCheck() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? `Server error (${res.status})`);
       }
-      setResult(await res.json());
+      const data: TlsCheckResult = await res.json();
+      setResult(data);
+      // Save to store
+      const record = addTlsScan(data);
+      setSavedId(record.id);
     } catch (err: any) {
       setError(err.message ?? 'TLS check failed.');
     } finally {
@@ -295,6 +306,21 @@ export default function TlsCheck() {
 
           {!loading && result && (
             <>
+              {/* Saved banner */}
+              {savedId && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[.06] px-4 py-3">
+                  <div className="flex items-center gap-2 text-[10px] text-emerald-300">
+                    <Check size={13} className="shrink-0" />
+                    <span>Scan saved as <span className="mono font-bold">{savedId}</span> — visible in Overview &amp; History.</span>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/scans/${savedId}`)}
+                    className="flex items-center gap-1.5 rounded-md border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1.5 text-[9px] font-bold text-emerald-300 transition hover:bg-emerald-400/15"
+                  >
+                    View report <ChevronRight size={11} />
+                  </button>
+                </div>
+              )}
               {/* Grade + overview */}
               <Card className="p-5">
                 <div className="flex flex-wrap items-center gap-5">
