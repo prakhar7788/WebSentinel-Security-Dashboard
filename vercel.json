@@ -1,5 +1,5 @@
 {
-  "buildCommand": "pnpm install --ignore-scripts && cd artifacts/websentinel && pnpm run build",
+  "buildCommand": "pnpm install --ignore-scripts && pnpm --filter @workspace/websentinel run build",
   "outputDirectory": "artifacts/websentinel/dist/public",
   "framework": null,
   "rewrites": [
