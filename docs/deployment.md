@@ -386,3 +386,4 @@ The free tier spins down after 15 minutes of no traffic. The first request after
 | Frontend URL | Vercel dashboard ΓåÆ websentinel (shown at top) |
 | Run tests locally | `cd artifacts/api-server && npx vitest run` |
 | Build locally | `pnpm run build` from repo root |
+.
