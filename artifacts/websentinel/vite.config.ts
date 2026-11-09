@@ -68,7 +68,7 @@ export default defineConfig(async ({ mode }) => {
     dedupe: ['react', 'react-dom'],
   },
   build: {
-    outDir: 'dist',
+    outDir: path.resolve(import.meta.dirname, 'dist'),
     emptyOutDir: true,
   },
   server: {
