@@ -1,33 +1,41 @@
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
-const rawPort = process.env.PORT;
+export default defineConfig(async ({ mode }) => {
+  // loadEnv reads .env, .env.local, .env.{mode} from the project root
+  // and merges them into a plain object — runs BEFORE the config body,
+  // so PORT and BASE_PATH are available even when not in process.env.
+  const env = loadEnv(mode, process.cwd(), '');
 
-if (!rawPort) {
-  throw new Error(
-    'PORT environment variable is required but was not provided.',
-  );
-}
+  const rawPort = env.PORT || process.env.PORT;
 
-const port = Number(rawPort);
+  if (!rawPort) {
+    throw new Error(
+      'PORT environment variable is required but was not provided. ' +
+      'Ensure artifacts/websentinel/.env exists with PORT=5173.',
+    );
+  }
 
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
+  const port = Number(rawPort);
 
-const basePath = process.env.BASE_PATH;
+  if (Number.isNaN(port) || port <= 0) {
+    throw new Error(`Invalid PORT value: "${rawPort}"`);
+  }
 
-if (!basePath) {
-  throw new Error(
-    'BASE_PATH environment variable is required but was not provided.',
-  );
-}
+  const basePath = env.BASE_PATH || process.env.BASE_PATH;
 
-export default defineConfig({
+  if (!basePath) {
+    throw new Error(
+      'BASE_PATH environment variable is required but was not provided. ' +
+      'Ensure artifacts/websentinel/.env exists with BASE_PATH=/.',
+    );
+  }
+
+  return {
   base: basePath,
   plugins: [
     react(),
@@ -78,4 +86,5 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: true,
   },
+  };
 });
