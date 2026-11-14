@@ -16,7 +16,7 @@
  */
 
 import crypto from "node:crypto";
-import { hashPasswordSync, hashPassword } from "./password.js";
+import { hashPassword } from "./password.js";
 import { db, isFirebaseEnabled } from "./firebase.js";
 import { logger } from "./logger.js";
 
@@ -70,52 +70,8 @@ const USERS_COLLECTION = "users";
 // ── In-memory store (fallback when Firebase is not configured) ──────────────
 const memUsers = new Map<string, UserRecord>();
 
-function seedDemoUsers() {
-  const seeds = [
-    { email: "admin@websentinel.io", name: "Alex Morgan", role: "Security Analyst", password: "demo1234", joinedAt: "Jan 2025", scansRun: 28 },
-    { email: "demo@websentinel.io",  name: "Demo User",   role: "Viewer",           password: "demo",     joinedAt: "Oct 2026", scansRun: 3 },
-  ];
-  for (const s of seeds) {
-    memUsers.set(s.email.toLowerCase(), {
-      id: generateUserId(), email: s.email.toLowerCase(), name: s.name, role: s.role,
-      passwordHash: hashPasswordSync(s.password), avatar: initials(s.name),
-      joinedAt: s.joinedAt, scansRun: s.scansRun,
-    });
-  }
-}
-
-seedDemoUsers();
-
-// ── Firestore seeding (runs once when Firebase is first available) ──────────
-let firestoreSeeded = false;
-async function seedFirestoreIfEmpty() {
-  if (!db || firestoreSeeded) return;
-  firestoreSeeded = true;
-
-  try {
-    const snapshot = await db.collection(USERS_COLLECTION).limit(1).get();
-    if (!snapshot.empty) return; // already has users
-
-    const seeds = [
-      { email: "admin@websentinel.io", name: "Alex Morgan", role: "Security Analyst", password: "demo1234", joinedAt: "Jan 2025", scansRun: 28 },
-      { email: "demo@websentinel.io",  name: "Demo User",   role: "Viewer",           password: "demo",     joinedAt: "Oct 2026", scansRun: 3 },
-    ];
-
-    for (const s of seeds) {
-      await db.collection(USERS_COLLECTION).doc(s.email.toLowerCase()).set({
-        id: generateUserId(), email: s.email.toLowerCase(), name: s.name, role: s.role,
-        passwordHash: hashPasswordSync(s.password), avatar: initials(s.name),
-        joinedAt: s.joinedAt, scansRun: s.scansRun,
-      });
-    }
-    logger.info("Firestore seeded with demo users");
-  } catch (err: any) {
-    logger.error({ err: err.message }, "Failed to seed Firestore");
-  }
-}
-
-// Fire-and-forget seeding
-if (isFirebaseEnabled) seedFirestoreIfEmpty();
+// ── Firestore: no seeding in production ────────────────────────────────────
+// Users are created exclusively via POST /api/auth/signup.
 
 // ── Store API ───────────────────────────────────────────────────────────────
 
