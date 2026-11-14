@@ -1,0 +1,524 @@
+================================================================================
+                    WEBSENTINEL SECURITY DASHBOARD
+                         PROJECT REPORT
+================================================================================
+
+PROJECT NAME     : WebSentinel Security Dashboard
+REPOSITORY       : https://github.com/prakhar7788/WebSentinel-Security-Dashboard
+LIVE API         : https://websentinel-security-dashboard.onrender.com
+TECH CATEGORY    : Full-Stack Web Security Tool
+REPORT DATE      : November 2026
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+WebSentinel is a full-stack web security dashboard that enables security analysts
+to perform subdomain enumeration, TLS/certificate inspection, security header
+analysis, and generate comprehensive PDF security reports — all from a browser-
+based interface with no terminal access required.
+
+The project is structured as a pnpm monorepo deployed across two platforms:
+  - Render       : Hosts the Express API server (Node.js backend)
+  - Vercel       : Hosts the React frontend (Vite static build)
+  - Firebase     : Persistence layer (Firestore) for production data
+
+The system aggregates data from 8 passive OSINT APIs and 3 binary enumeration
+tools, runs DNS brute-force, and resolves found subdomains — all orchestrated
+through a single authenticated API endpoint.
+
+================================================================================
+2. SYSTEM ARCHITECTURE
+================================================================================
+
+2.1 High-Level Overview
+-----------------------
+The project is organized as a pnpm monorepo under /artifacts with the following
+packages:
+
+  api-server       Express REST API (Node.js, TypeScript, esbuild)
+  websentinel      React frontend (Vite, Tailwind CSS, shadcn/ui)
+  api-spec         OpenAPI 3.1 specification (source of truth)
+  api-zod          Generated Zod validators from OpenAPI spec
+  api-client-react Generated React-Query hooks from OpenAPI spec
+  db               Drizzle ORM + PostgreSQL schema (scaffolded)
+
+Communication:
+  Frontend <--HTTPS/JSON--> API Server <--TCP/HTTPS--> External APIs & DNS
+
+2.2 API Server Architecture
+----------------------------
+Framework  : Express v5 (ESM)
+Port       : 3000
+Build      : esbuild bundles src/ into dist/index.mjs (~1.6 MB single file)
+
+Middleware stack (in order):
+  1. pino-http       Request/response structured logging (redacts auth headers)
+  2. Security headers X-Frame-Options, X-Content-Type-Options, HSTS, CSP,
+                      Referrer-Policy
+  3. CORS            Explicit origin allowlist via CORS_ORIGINS env var
+  4. express.json    JSON body parsing
+  5. express.urlencoded URL-encoded body parsing
+  6. /api router     All application routes
+
+API Route Map:
+  GET  /api/healthz                    Health check (no auth)
+  POST /api/auth/login                 Authenticate user, return bearer token
+  POST /api/auth/logout                Invalidate session token
+  GET  /api/auth/me                    Return current user profile
+  POST /api/subdomains/enumerate       Run full subdomain scan (requires auth)
+  POST /api/tls/check                  Run TLS/certificate analysis (requires auth)
+
+Authentication:
+  - Bearer token strategy
+  - Tokens stored in in-memory Map (activeSessions)
+  - requireAuth middleware protects scan endpoints
+  - Firebase Admin SDK used for production user management
+
+2.3 Frontend Architecture
+--------------------------
+Framework  : React 19 + Vite 7
+Routing    : wouter (minimalist, ~2 KB)
+Styling    : Tailwind CSS v4 + shadcn/ui (Radix UI primitives)
+State      : TanStack React Query (server state) + React Context (auth, workspace)
+
+Provider Tree:
+  QueryClientProvider
+    TooltipProvider
+      AuthProvider (token in localStorage, login/logout)
+        WorkspaceProvider (named workspaces + active workspace)
+          ScanStoreProvider (scan history in localStorage, max 50 per workspace)
+            WouterRouter
+              RoutedErrorBoundary
+                DashboardRoutes
+
+Frontend Routes (fully working):
+  /login         Login form
+  /signup        Registration form
+  /subdomains    Subdomain enumeration tool
+  /tls           TLS/certificate check tool
+  /reports       PDF report generator
+  /history       Full scan history with delete/clear
+  /settings      Workspace settings
+  /profile       User profile and preferences
+  /*             404 Not Found
+
+Data Persistence:
+  localStorage keys (workspace-namespaced):
+    ws_workspaces           All workspace records
+    ws_active_workspace     Active workspace ID
+    ws_scan_history         Default workspace scan records
+    ws_scan_history_{id}    Per-named-workspace scan records
+    ws_token                Auth bearer token (global)
+
+================================================================================
+3. FEATURES (FULLY WORKING)
+================================================================================
+
+3.1 Subdomain Enumeration
+--------------------------
+Triggered via POST /api/subdomains/enumerate.
+
+Pipeline stages:
+  Stage 1+2 — Parallel passive intelligence gathering:
+
+    Passive API Sources (8 total, all running in parallel):
+      crt.sh          Certificate Transparency logs (no auth)
+      HackerTarget    Host search API (100 req/day free tier)
+      RapidDNS        Subdomain database (HTML scrape)
+      AlienVault OTX  Passive DNS data (rate limited on large domains)
+      ThreatCrowd     Threat intelligence (may time out occasionally)
+      VirusTotal      Domain report (requires VT_API_KEY env var)
+      URLScan.io      Browser scan history
+      Anubis-DB       Passive subdomain database
+
+    Binary Tool Runners (3 total, all running in parallel):
+      Subfinder       Go binary (bin/subfinder.exe, ~30 MB)
+      Amass           Go binary (bin/amass.exe, ~51 MB)
+      Sublist3r       Python script (pip install sublist3r)
+
+  Stage 3 — Built-in prefix guessing (14 common prefixes: www, mail, api, etc.)
+  Stage 4 — DNS brute-force with configurable wordlist (batches of 15)
+  Stage 5 — DNS resolution (A, AAAA, CNAME) + optional HTTP probe
+
+  Response fields per subdomain:
+    fqdn, resolved, ipAddresses, source, sources[], httpStatus,
+    httpsAvailable, responseTime, cnames
+
+3.2 TLS / Certificate Analysis
+--------------------------------
+Triggered via POST /api/tls/check. All checks run in parallel.
+
+  Certificate inspection:
+    tls.connect -> getPeerCertificate -> parse subject, issuer, SANs,
+    validity dates, fingerprint, self-signed flag, wildcard detection
+
+  Security headers check:
+    https.request GET / -> collect response headers
+    Parse HSTS (max-age, includeSubDomains, preload)
+    http.request HEAD :80 -> check HTTP-to-HTTPS redirect
+
+  TLS version probing:
+    4x tls.connect with pinned min/max version
+    Checks support for: TLS 1.0, 1.1, 1.2, 1.3
+
+  Grading algorithm:
+    Starts at 100, deducts points for:
+      - Certificate expiring soon or expired
+      - Self-signed certificate
+      - Deprecated TLS versions (1.0, 1.1) enabled
+      - Missing security headers (HSTS, X-Frame-Options, etc.)
+      - No HTTP-to-HTTPS redirect
+
+  Response: { host, cert, securityHeaders[], httpsRedirect,
+              tlsSupport, overallGrade, findings[], elapsedMs }
+
+3.3 PDF Report Generation
+--------------------------
+Fully client-side — no server round-trip. Uses jsPDF + jspdf-autotable.
+
+12 configurable report sections:
+  1.  Cover page (classification banner, metadata)
+  2.  Executive summary (stat boxes, security posture narrative)
+  3.  Subdomain enumeration (asset inventory, source breakdown table)
+  4.  Certificate transparency (CT-sourced hostnames, wildcards)
+  5.  DNS analysis (IP mapping, CNAME takeover, dangling records)
+  6.  HTTPS/TLS assessment (cert details, version support matrix, HSTS)
+  7.  Security headers (per-header pass/fail + recommendations)
+  8.  Findings (per-severity list with IDs, impact, evidence)
+  9.  Risk assessment (scoring methodology, per-domain scores)
+  10. Mitigation (remediation steps, responsible teams, timelines)
+  11. Analytics (score trends, discovery stats, compliance rates)
+  12. Appendices (execution log, tool versions, limitations)
+
+3.4 Authentication
+-------------------
+  Login      : POST /api/auth/login with email + password
+  Session    : Bearer token stored in localStorage, validated per-request
+  Logout     : Invalidates session token server-side
+  Demo users :
+    admin@websentinel.io / demo1234  (Security Analyst role)
+    demo@websentinel.io  / demo      (Viewer role)
+  Production : Firebase Admin SDK for real user management
+
+3.5 Workspace Management
+--------------------------
+  Users can create named workspaces (e.g. per-client, per-project).
+  Each workspace has its own isolated scan history (max 50 records, FIFO).
+  Switching workspaces updates all views to show only that workspace's data.
+
+3.6 Scan History
+-----------------
+  All subdomain and TLS scans are saved automatically per workspace.
+  Users can view, delete individual records, or clear all history.
+  Each record stores the full raw API response for re-inspection.
+  Max 50 records per workspace (oldest removed automatically).
+
+================================================================================
+4. TECHNOLOGY STACK
+================================================================================
+
+4.1 Monorepo & Tooling
+-----------------------
+  pnpm 9+          Package manager + workspace orchestration
+  TypeScript ~5.9  Strict mode, project references
+  esbuild 0.28     API server bundler (single ESM output file)
+  Vite 7           Frontend dev server and production bundler
+  Prettier         Code formatting
+
+4.2 Backend
+------------
+  Node.js 20.6+    Runtime (requires --env-file flag support)
+  Express v5       HTTP framework (ESM)
+  Zod              Request body validation (safeParse on all inputs)
+  pino             Structured JSON logging
+  pino-http        Express request/response logging middleware
+  cors             CORS middleware with explicit origin allowlist
+  Firebase Admin   Production auth and Firestore persistence
+
+4.3 Frontend
+-------------
+  React 19         UI library
+  wouter           Client-side routing (~2 KB)
+  TanStack Query   Server-state management + caching
+  Tailwind CSS v4  Utility-first styling
+  shadcn/ui        Component library (54 Radix UI components)
+  Radix UI         Accessible headless UI primitives
+  lucide-react     SVG icons
+  recharts         Charts (area, bar, line)
+  framer-motion    Animations
+  react-hook-form  Form state management
+  jsPDF            PDF generation (client-side)
+  jspdf-autotable  Table rendering in PDFs
+  date-fns         Date formatting
+  sonner           Toast notifications
+
+4.4 External Data Sources
+--------------------------
+  crt.sh           Certificate Transparency logs (no auth required)
+  HackerTarget     Host search (100 req/day free tier)
+  RapidDNS         Subdomain database (HTML scrape)
+  AlienVault OTX   Passive DNS intelligence
+  ThreatCrowd      Threat intelligence (rate limited)
+  VirusTotal       Domain report API (requires API key)
+  URLScan.io       Browser scan history
+  Anubis-DB        Passive subdomain database
+
+4.5 Binary Tools
+-----------------
+  Subfinder v2.17  Go binary, passive subdomain discovery (bin/subfinder.exe)
+  Amass v5.1.3     Go binary, passive + active enumeration (bin/amass.exe)
+  Sublist3r v1.0   Python script, multi-source enumeration
+
+================================================================================
+5. DEPLOYMENT
+================================================================================
+
+5.1 Architecture
+-----------------
+  API Server  : Render.com (Web Service, Node.js runtime)
+  Frontend    : Vercel (Static, Vite preset)
+  Database    : Firebase Firestore (production persistence)
+  CI/CD       : GitHub auto-deploy on push to main branch
+
+5.2 Render (API Server)
+------------------------
+  Build command : pnpm install --ignore-scripts && cd artifacts/api-server
+                  && node ./build.mjs
+  Start command : node --enable-source-maps artifacts/api-server/dist/index.mjs
+  Instance type : Free tier
+  Auto-deploy   : On every push to main
+
+  Required environment variables:
+    NODE_ENV              production
+    PORT                  3000
+    LOG_LEVEL             info
+    CORS_ORIGINS          https://your-vercel-domain.vercel.app
+    FIREBASE_PROJECT_ID   Firebase project ID
+    FIREBASE_CLIENT_EMAIL Firebase service account email
+    FIREBASE_PRIVATE_KEY  Firebase private key (full PEM string)
+    VT_API_KEY            VirusTotal API key (optional)
+
+5.3 Vercel (Frontend)
+----------------------
+  Root directory   : artifacts/websentinel
+  Build command    : pnpm run build
+  Output directory : dist
+  Framework        : Vite
+  Auto-deploy      : On every push to main
+  Rewrites         : All routes -> /index.html (SPA routing)
+
+  Required environment variables:
+    PORT          5173
+    BASE_PATH     /
+    VITE_API_URL  https://websentinel-security-dashboard.onrender.com
+
+5.4 Firebase Setup
+-------------------
+  1. Create Firebase project in Google Cloud Console
+  2. Enable Firestore Database
+  3. Project Settings -> Service Accounts -> Generate New Private Key
+  4. Add FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+     to Render environment variables
+  5. Grant Cloud Datastore User role to the service account in IAM
+
+================================================================================
+6. SECURITY POSTURE
+================================================================================
+
+6.1 Implemented Controls
+--------------------------
+  Input validation    : Zod safeParse() on all API route bodies
+  Domain validation   : RFC-compliant regex on domain/host inputs
+  CORS restriction    : Explicit origin allowlist (CORS_ORIGINS env var)
+  Security headers    : X-Frame-Options, X-Content-Type-Options, HSTS,
+                        Content-Security-Policy, Referrer-Policy
+  Log redaction       : pino-http strips Authorization and Cookie headers
+  Auth protection     : requireAuth middleware on all scan endpoints
+  HTTPS               : Enforced by Render and Vercel platforms
+
+6.2 Prototype Limitations (not production-ready)
+--------------------------------------------------
+  Password hashing    : DEMO_USERS stores plaintext passwords
+  Token generation    : Uses Math.random() (not cryptographically secure)
+  Token expiry        : activeSessions entries never expire
+  Token storage       : localStorage (XSS-accessible; HttpOnly cookie preferred)
+  Rate limiting       : No brute-force protection on auth endpoints
+  Session store       : In-memory Map (resets on restart)
+
+6.3 Production Upgrade Path
+-----------------------------
+  1. Hash passwords with bcrypt
+  2. Replace Math.random() tokens with crypto.randomBytes()
+  3. Add TTL to sessions or switch to signed JWT with expiry
+  4. Move token to HttpOnly cookie
+  5. Add express-rate-limit to auth routes
+  6. Connect @workspace/db (Drizzle + PostgreSQL) for persistent sessions/users
+  7. Move scan history from localStorage to API-backed per-user records
+
+================================================================================
+7. CODEBASE STRUCTURE
+================================================================================
+
+WebSentinel-Security-Dashboard/
+  artifacts/
+    api-server/
+      src/
+        app.ts              Express app setup (middleware stack)
+        index.ts            Server entry point (port binding)
+        routes/
+          auth.ts           Login, logout, /me endpoints
+          health.ts         GET /api/healthz
+          subdomains.ts     POST /api/subdomains/enumerate
+          tls.ts            POST /api/tls/check
+          scans.ts          Scan record management
+          index.ts          Router composition
+        lib/
+          logger.ts         pino logger instance
+      build.mjs             esbuild bundler script
+      package.json
+      tsconfig.json
+
+    websentinel/
+      src/
+        main.tsx            React entry point
+        App.tsx             Provider tree + router
+        pages/
+          login.tsx         Login form
+          signup.tsx        Registration form
+          subdomains.tsx    Subdomain enumeration UI
+          tls-check.tsx     TLS analysis UI
+          profile.tsx       User profile
+          not-found.tsx     404 page
+        components/
+          ui/               54 shadcn/ui components
+        hooks/              Custom React hooks
+        lib/                Utilities, report engine, API helpers
+      vite.config.ts
+      vercel.json
+      package.json
+
+  lib/
+    api-spec/               OpenAPI 3.1 specification
+    api-zod/                Generated Zod validators
+    api-client-react/       Generated React-Query hooks
+    db/                     Drizzle ORM schema (PostgreSQL)
+
+  bin/
+    subfinder.exe           Subdomain enumeration binary (Go, ~30 MB)
+    amass.exe               Subdomain enumeration binary (Go, ~51 MB)
+
+  docs/
+    architecture.md         System architecture documentation
+    techstack.md            Full technology inventory
+    auth-architecture.md    Auth flow documentation
+    codebase.md             Codebase walkthrough
+    deployment.md           Deployment guide (Render + Vercel)
+    firebase.md             Firebase setup guide
+    project-report.txt      This file
+
+  vercel.json               Root Vercel config
+  render.yaml               Render deployment config
+  pnpm-workspace.yaml       pnpm workspace definition
+  RUNNING.md                Local development guide
+
+================================================================================
+8. LOCAL DEVELOPMENT
+================================================================================
+
+Prerequisites:
+  Node.js 20.6+   (node --version)
+  pnpm 9+         (npm install -g pnpm)
+  Python 3.8+     (for Sublist3r)
+
+Setup (one time):
+  pnpm install --ignore-scripts
+  pip install sublist3r
+
+Start API server (Terminal 1):
+  cd artifacts/api-server
+  pnpm run dev
+  -> Server listens on http://localhost:3000
+
+Start frontend (Terminal 2):
+  cd artifacts/websentinel
+  pnpm run dev
+  -> Open http://localhost:5173
+
+Demo credentials:
+  admin@websentinel.io / demo1234   (Security Analyst)
+  demo@websentinel.io  / demo       (Viewer)
+
+Key environment variables:
+  artifacts/api-server/.env
+    PORT=3000
+    NODE_ENV=development
+    LOG_LEVEL=info
+    VT_API_KEY=<optional>
+
+  artifacts/websentinel/.env
+    PORT=5173
+    BASE_PATH=/
+    VITE_API_URL=http://localhost:3000
+
+================================================================================
+9. API ENDPOINTS REFERENCE
+================================================================================
+
+  GET  /api/healthz
+    Response: { status: "ok" }
+
+  POST /api/auth/login
+    Body:     { email: string, password: string }
+    Response: { token: string, user: { id, email, name, role } }
+
+  POST /api/auth/logout
+    Headers:  Authorization: Bearer <token>
+    Response: { success: true }
+
+  GET  /api/auth/me
+    Headers:  Authorization: Bearer <token>
+    Response: { id, email, name, role }
+
+  POST /api/subdomains/enumerate
+    Headers:  Authorization: Bearer <token>
+    Body:     { domain: string, mode?: string, wordlistSize?: number,
+                tools?: string[], passiveSources?: string[] }
+    Response: { domain, totalFound, resolvedCount,
+                sourceSummaries[], subdomains[] }
+
+  POST /api/tls/check
+    Headers:  Authorization: Bearer <token>
+    Body:     { host: string, port?: number,
+                checkHeaders?: boolean, checkTlsVersions?: boolean }
+    Response: { host, cert, securityHeaders[], httpsRedirect,
+                tlsSupport, overallGrade, findings[], elapsedMs }
+
+================================================================================
+10. FUTURE SCOPE
+================================================================================
+
+The following features are planned for future development:
+
+  DOM Inspector
+    - In-browser DOM analysis of a target website
+    - Detection of inline scripts, third-party resource loading,
+      dangerous DOM patterns (eval, document.write, innerHTML)
+    - Script and iframe inventory
+    - Detection of potential XSS sinks and CSP bypass vectors
+    - Visual diff between DOM snapshots (change detection)
+
+  Additional planned enhancements:
+    - Persistent user accounts and scan history (PostgreSQL via Drizzle)
+    - Scheduled/recurring scans with change alerting
+    - CVE correlation for detected services and software versions
+    - Webhook notifications for new findings
+    - Team collaboration (shared workspaces, role-based access)
+    - API rate limiting and usage quotas per user
+    - WHOIS and ASN data enrichment for discovered IPs
+    - Port scanning integration (Nmap wrapper)
+    - Screenshot capture for discovered subdomains
+
+================================================================================
+END OF REPORT
+================================================================================
