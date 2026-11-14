@@ -1,33 +1,23 @@
 /**
- * session.ts — JWT-based session management.
+ * session.ts — session store with crypto-secure tokens and expiry.
  *
- * Issues signed JWTs (HS256) instead of opaque random tokens.
- * The JWT payload contains { sub (userId), email, iat, exp }.
- * Tokens are signed with JWT_SECRET from the environment.
+ * Replaces the original Math.random()-based token generation with
+ * crypto.randomUUID(). Sessions expire after SESSION_TTL_MS (24 hours).
  *
- * A local in-memory revocation set (destroyedTokens) tracks logged-out
- * tokens so logout is effective before the JWT naturally expires.
- * Revoked entries are pruned automatically once their exp passes.
+ * The activeSessions Map is the key shared state between auth.ts (which
+ * creates/destroys sessions) and the requireAuth middleware in
+ * subdomains.ts and tls.ts (which check token validity).
  *
- * Session TTL: 24 hours (configurable via SESSION_TTL_SECONDS).
+ * To maintain backwards compatibility, the Map is exported as the same
+ * `activeSessions` name used by the route files.
  */
 
-import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
 import { db } from "./firebase.js";
 import { logger } from "./logger.js";
 
-const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
-
-function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret || secret.length < 32) {
-    throw new Error(
-      "JWT_SECRET env var is required and must be at least 32 characters. " +
-      "Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('hex'))\""
-    );
-  }
-  return secret;
-}
+// 24 hours in milliseconds
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface SessionData {
   email: string;
@@ -36,42 +26,24 @@ export interface SessionData {
   expiresAt: number;
 }
 
-export interface JwtPayload {
-  sub: string;   // userId
-  email: string;
-  iat: number;
-  exp: number;
+/** Token → SessionData mapping. Primary store — always in-memory for fast reads. */
+export const activeSessions: Map<string, SessionData> = new Map();
+
+/** Generate a cryptographically secure opaque token. */
+export function generateToken(): string {
+  return "tok_" + crypto.randomUUID();
 }
 
-/** Revocation set: tokens that have been explicitly logged out. */
-const revokedTokens: Map<string, number> = new Map(); // token → expiresAt (ms)
-
-/** Prune expired entries from the revocation set. */
-function pruneRevoked(): void {
-  const now = Date.now();
-  for (const [token, exp] of revokedTokens) {
-    if (now > exp) revokedTokens.delete(token);
-  }
-}
-
-/** Issue a signed JWT for the given user. Returns the token string. */
+/** Create and store a new session for the given user. Returns the token. */
 export function createSession(email: string, userId: string): string {
-  const secret = getJwtSecret();
-  const token = jwt.sign(
-    { sub: userId, email },
-    secret,
-    { algorithm: "HS256", expiresIn: SESSION_TTL_SECONDS }
-  );
+  const token = generateToken();
+  const now = Date.now();
+  const session: SessionData = { email, userId, issuedAt: now, expiresAt: now + SESSION_TTL_MS };
+  activeSessions.set(token, session);
 
-  // Fire-and-forget: persist session metadata to Firestore for audit log
+  // Fire-and-forget: persist to Firestore for crash recovery
   if (db) {
-    const now = Date.now();
-    db.collection("sessions").doc(userId + "_" + now).set({
-      userId,
-      email,
-      issuedAt: now,
-      expiresAt: now + SESSION_TTL_SECONDS * 1000,
-    }).catch((err: any) => {
+    db.collection("sessions").doc(token).set(session).catch((err: any) => {
       logger.warn({ err: err.message }, "Firestore session write failed (non-fatal)");
     });
   }
@@ -79,55 +51,36 @@ export function createSession(email: string, userId: string): string {
   return token;
 }
 
-/**
- * Verify and decode a JWT. Returns SessionData if valid, null otherwise.
- * Also checks the revocation set so logged-out tokens are rejected.
- */
+/** Look up a session by token. Returns null if not found or expired. */
 export function getSession(token: string): SessionData | null {
-  // Check revocation set first (fast path)
-  if (revokedTokens.has(token)) return null;
-
-  try {
-    const secret = getJwtSecret();
-    const payload = jwt.verify(token, secret, { algorithms: ["HS256"] }) as JwtPayload;
-    return {
-      email: payload.email,
-      userId: payload.sub,
-      issuedAt: payload.iat * 1000,
-      expiresAt: payload.exp * 1000,
-    };
-  } catch {
-    // jwt.verify throws for expired, malformed, or bad-signature tokens
+  const session = activeSessions.get(token);
+  if (!session) return null;
+  if (Date.now() > session.expiresAt) {
+    activeSessions.delete(token);
     return null;
   }
+  return session;
 }
 
-/** Check if a token is valid (not expired, not revoked, valid signature). */
+/** Check if a token is valid (exists and not expired). */
 export function isValidToken(token: string): boolean {
   return getSession(token) !== null;
 }
 
-/**
- * Revoke a token (logout). The token is added to the revocation set
- * and will be pruned automatically once its exp passes.
- */
+/** Destroy a session by token. No-op if the token doesn't exist. */
 export function destroySession(token: string): void {
-  try {
-    const secret = getJwtSecret();
-    const payload = jwt.decode(token) as JwtPayload | null;
-    if (payload?.exp) {
-      revokedTokens.set(token, payload.exp * 1000);
-      pruneRevoked();
-    }
-  } catch {
-    // ignore decode errors on destroy
+  activeSessions.delete(token);
+  if (db) {
+    db.collection("sessions").doc(token).delete().catch(() => {});
   }
 }
 
-/**
- * activeSessions shim — kept for backwards compatibility with any code
- * that imports this symbol. JWT tokens don't need an in-memory map, but
- * some middleware references this. The Map is always empty; auth uses
- * getSession() / isValidToken() instead.
- */
-export const activeSessions: Map<string, SessionData> = new Map();
+/** Remove all expired sessions from the store. */
+export function pruneExpiredSessions(): number {
+  const now = Date.now();
+  let pruned = 0;
+  for (const [token, session] of activeSessions) {
+    if (now > session.expiresAt) { activeSessions.delete(token); pruned++; }
+  }
+  return pruned;
+}
