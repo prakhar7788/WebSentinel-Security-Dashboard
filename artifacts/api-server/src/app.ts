@@ -76,6 +76,7 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         cb(null, true);
       } else {
+        logger.warn({ origin, allowedOrigins }, "CORS blocked origin");
         cb(new Error("Not allowed by CORS"));
       }
     },
