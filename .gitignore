@@ -54,6 +54,18 @@ Thumbs.db
 .cache/
 .local/
 
+# Replit-specific files
+.replit
+.replitignore
+replit.md
+.replit-artifact/
+
+# Internal docs
+docs/project-report.txt
+
+# Scripts
+scripts/post-merge.sh
+
 # Environment files — never commit local config or secrets
 .env
 .env.local
