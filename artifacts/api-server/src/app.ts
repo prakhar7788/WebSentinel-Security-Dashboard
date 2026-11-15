@@ -21,6 +21,10 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Trust the first proxy (Render, Vercel, etc.) so express-rate-limit
+// can correctly identify client IPs from the X-Forwarded-For header.
+app.set("trust proxy", 1);
+
 // ── 1. Request/response logging ─────────────────────────────────────────────
 app.use(
   pinoHttp({
