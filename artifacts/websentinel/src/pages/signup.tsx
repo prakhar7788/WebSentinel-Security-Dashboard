@@ -43,6 +43,14 @@ export default function Signup() {
       setError('Password must be at least 8 characters.');
       return;
     }
+    if (!/[A-Z]/.test(password)) {
+      setError('Password must contain at least one uppercase letter.');
+      return;
+    }
+    if (!/[0-9]/.test(password)) {
+      setError('Password must contain at least one number.');
+      return;
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
       return;
@@ -134,7 +142,7 @@ export default function Signup() {
                 <label htmlFor="signup-password" className="text-[10px] font-semibold text-[#b5c0d3]">
                   Password
                 </label>
-                <span className="text-[8px] text-[#68758b]">Minimum 8 characters</span>
+                <span className="text-[8px] text-[#68758b]">Min 8 chars, 1 uppercase, 1 number</span>
               </div>
               <div className={`flex items-center gap-2.5 rounded-lg border bg-[#0d1420] px-3 transition-colors ${error && !password ? 'border-red-400/40' : 'border-[#2b3850] focus-within:border-[#5e9aff]'}`}>
                 <Lock size={14} className="shrink-0 text-[#71809a]" />
